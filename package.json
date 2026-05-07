@@ -1,15 +1,54 @@
 {
-  "name": "respawn-control-overlay",
+  "name": "respawn-control",
   "version": "0.1.0",
-  "description": "Gaming cafe timer overlay and lock screen POC",
+  "description": "Gaming cafe timer overlay and PC lock screen",
+  "author": "suryababus",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
     "start": "npm run build && electron .",
-    "dev": "tsc && electron ."
+    "dev": "tsc && electron .",
+    "dist": "npm run build && electron-builder --win",
+    "dist:publish": "npm run build && electron-builder --win --publish always"
+  },
+  "build": {
+    "appId": "com.respawn.control",
+    "productName": "Respawn Control",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": null,
+      "uninstallerIcon": null,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Respawn Control"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "suryababus",
+      "repo": "respawn-control"
+    }
   },
   "devDependencies": {
     "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.6.0"
   },
   "dependencies": {
