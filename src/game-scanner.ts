@@ -8,6 +8,7 @@ export type DetectedGame = {
   appId?: string;
   installPath: string;
   executablePath?: string;
+  shortcutPath?: string;
   launchCommand?: string;
 };
 
@@ -257,31 +258,19 @@ function processDesktopEntry(fullPath: string, fileName: string): DetectedGame |
   }
 
   if (ext === ".lnk") {
+    // For .lnk files, always launch the shortcut itself — Windows handles it.
+    // We resolve the target only to detect the platform (steam vs local).
     const target = resolveShortcutTarget(fullPath);
-    if (!target) return null;
+    const platform = target?.startsWith("steam://") ? "steam" as const : "local" as const;
 
-    // If the shortcut points to a steam:// or other URL
-    if (target.includes("://")) {
-      return {
-        name: baseName,
-        platform: target.startsWith("steam://") ? "steam" : "local",
-        installPath: path.dirname(fullPath),
-        launchCommand: target,
-      };
-    }
-
-    // Points to an exe
-    if (target.toLowerCase().endsWith(".exe")) {
-      return {
-        name: baseName,
-        platform: "local",
-        installPath: path.dirname(target),
-        executablePath: target,
-        launchCommand: target,
-      };
-    }
-
-    return null;
+    return {
+      name: baseName,
+      platform,
+      installPath: path.dirname(fullPath),
+      shortcutPath: fullPath,
+      executablePath: target?.toLowerCase().endsWith(".exe") ? target : undefined,
+      launchCommand: fullPath, // Launch the .lnk directly
+    };
   }
 
   if (ext === ".url") {
@@ -292,6 +281,7 @@ function processDesktopEntry(fullPath: string, fileName: string): DetectedGame |
       name: baseName,
       platform: target.startsWith("steam://") ? "steam" : "local",
       installPath: path.dirname(fullPath),
+      shortcutPath: fullPath,
       launchCommand: target,
     };
   }

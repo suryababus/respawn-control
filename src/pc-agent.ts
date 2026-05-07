@@ -196,12 +196,20 @@ export function launchGame(launchCommand?: string): void {
 
   console.log(`[agent] Launching: ${launchCommand}`);
 
-  // steam:// URLs and exe paths both work with `start`
-  if (launchCommand.startsWith("steam://") || launchCommand.includes("://")) {
-    exec(`start "" "${launchCommand}"`);
-  } else {
-    exec(`"${launchCommand}"`);
-  }
+  // Use `start` for everything — it handles .lnk, .exe, .url, steam:// URLs
+  const cmd = `start "" "${launchCommand}"`;
+  exec(cmd, (err) => {
+    if (err) {
+      console.error(`[agent] Launch failed: ${err.message}`);
+      // Fallback: use shell open via Electron
+      try {
+        const { shell } = require("electron");
+        shell.openPath(launchCommand);
+      } catch (fallbackErr) {
+        console.error(`[agent] Fallback launch also failed:`, fallbackErr);
+      }
+    }
+  });
 }
 
 export function cleanup(): void {
