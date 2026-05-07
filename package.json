@@ -1,0 +1,15 @@
+{
+  "name": "respawn-control-overlay",
+  "version": "0.1.0",
+  "description": "Gaming cafe timer overlay and lock screen POC",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "dev": "tsc && electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "typescript": "^5.6.0"
+  }
+}

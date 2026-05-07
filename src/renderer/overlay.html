@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      user-select: none;
+      -webkit-app-region: no-drag;
+    }
+
+    .timer-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: rgba(15, 15, 20, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px 24px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .timer-icon {
+      font-size: 20px;
+    }
+
+    .timer-text {
+      font-size: 28px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 2px;
+      color: #e0e0e0;
+      transition: color 0.3s ease;
+    }
+
+    .timer-text.warning {
+      color: #ffa726;
+      text-shadow: 0 0 12px rgba(255, 167, 38, 0.5);
+    }
+
+    .timer-text.critical {
+      color: #ef5350;
+      animation: pulse 1s ease-in-out infinite;
+      text-shadow: 0 0 12px rgba(239, 83, 80, 0.6);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="timer-container">
+    <span class="timer-icon">⏱</span>
+    <span id="timer" class="timer-text">--:--</span>
+  </div>
+
+  <script>
+    const timerEl = document.getElementById('timer');
+
+    window.api.getInitialTime().then((data) => {
+      timerEl.textContent = data.timeStr;
+    });
+
+    window.api.onTimerTick((data) => {
+      timerEl.textContent = data.timeStr;
+      timerEl.className = 'timer-text ' + data.warning;
+    });
+  </script>
+</body>
+</html>
