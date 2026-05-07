@@ -11,6 +11,7 @@ import {
   setOffline,
   launchGame,
   cleanup,
+  setCurrentRate,
   SessionCommand,
 } from "./pc-agent";
 
@@ -252,6 +253,7 @@ async function handleStartSession(cmd: SessionCommand) {
   const durationMinutes = cmd.durationMinutes || 60;
 
   currentSessionId = sessionId;
+  setCurrentRate(cmd.ratePerHour || 100);
 
   // Hide lock screen if showing
   hideLockScreen();

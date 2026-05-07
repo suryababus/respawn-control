@@ -40,6 +40,7 @@ export type SessionCommand = {
   launchCommand?: string;
   durationMinutes?: number;
   addMinutes?: number;
+  ratePerHour?: number;
   timestamp: Timestamp;
 };
 
@@ -48,6 +49,7 @@ let unsubscribeCommand: (() => void) | null = null;
 let currentSessionStartTime: Date | null = null;
 let currentGameName: string | null = null;
 let currentGameId: string | null = null;
+let currentRatePerHour: number = 100;
 let pcOnlineSince: Date | null = null;
 
 // Callbacks that main.ts will register
@@ -92,9 +94,11 @@ export async function logSessionHistory(
   gameName: string,
   startTime: Date,
   endTime: Date,
-  durationMinutes: number
+  durationMinutes: number,
+  ratePerHour: number
 ): Promise<void> {
   try {
+    const amountCharged = Math.round((durationMinutes / 60) * ratePerHour);
     await addDoc(collection(db, "session_history"), {
       pcId: PC_ID,
       pcName: PC_NAME,
@@ -104,6 +108,8 @@ export async function logSessionHistory(
       startTime: Timestamp.fromDate(startTime),
       endTime: Timestamp.fromDate(endTime),
       durationMinutes,
+      ratePerHour,
+      amountCharged,
       date: todayDateStr(),
     });
     console.log(`[agent] Logged session history: ${gameName} — ${durationMinutes}min`);
@@ -209,17 +215,19 @@ export async function markSessionEnded(): Promise<void> {
       const endTime = new Date();
       const durationMinutes = Math.round((endTime.getTime() - currentSessionStartTime.getTime()) / 60000);
       await logSessionHistory(
-        "", // sessionId already cleared by caller
+        "",
         currentGameId || "",
         currentGameName,
         currentSessionStartTime,
         endTime,
-        durationMinutes
+        durationMinutes,
+        currentRatePerHour
       );
     }
     currentSessionStartTime = null;
     currentGameName = null;
     currentGameId = null;
+    currentRatePerHour = 100;
 
     await updateDoc(pcDocRef(), {
       status: "available",
@@ -300,6 +308,10 @@ export function cleanup(): void {
     unsubscribeCommand();
     unsubscribeCommand = null;
   }
+}
+
+export function setCurrentRate(rate: number): void {
+  currentRatePerHour = rate;
 }
 
 export { PC_ID };
