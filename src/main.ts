@@ -245,6 +245,13 @@ ipcMain.handle("get-initial-time", () => {
 // --- App Lifecycle ---
 
 app.whenReady().then(async () => {
+  // Auto-start on Windows login
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    path: app.getPath("exe"),
+    args: ["--autostart"],
+  });
+
   createOverlayWindow();
 
   // Show lock screen initially — PC is locked until mobile app starts a session
