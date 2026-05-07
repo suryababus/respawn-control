@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import path from "path";
 import {
   registerPc,
@@ -17,6 +17,7 @@ import {
 // --- Configuration ---
 const ADMIN_PIN = "1234";
 
+let tray: Tray | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let lockWindow: BrowserWindow | null = null;
 
@@ -24,6 +25,67 @@ let remainingSeconds = 0;
 let timerInterval: NodeJS.Timeout | null = null;
 let isPaused = false;
 let currentSessionId: string | null = null;
+
+// --- System Tray ---
+
+function createTray() {
+  // Create a 16x16 icon programmatically (green gamepad-style dot)
+  const icon = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA" +
+    "W0lEQVR4nGNgGAWDATAy0NmAf/8Z/pMiTrIB/xkY/pNqCMkG/GdgIE8cXS8xBjAQYwg2" +
+    "A/4zMKCS+c/AQFBtQnwKJJAYA4gJQ4INIDoMSTaAmDAcSgAAIF0bES3yJOYAAAAASUVORK5CYII="
+  );
+
+  tray = new Tray(icon);
+  tray.setToolTip("Respawn Control — Idle");
+
+  updateTrayMenu();
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+
+  const statusLabel = currentSessionId
+    ? `Session: ${formatTime(remainingSeconds)} remaining`
+    : "Idle — Waiting for session";
+
+  const contextMenu = Menu.buildFromTemplate([
+    { label: "Respawn Control", enabled: false },
+    { type: "separator" },
+    { label: statusLabel, enabled: false },
+    { type: "separator" },
+    {
+      label: "Rescan Games",
+      click: async () => {
+        try {
+          await registerPc();
+          console.log("[tray] Games rescanned");
+        } catch (err) {
+          console.error("[tray] Rescan failed:", err);
+        }
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit (Admin)",
+      click: () => {
+        // Only allow quit if no lock screen is active
+        if (lockWindow) {
+          return;
+        }
+        cleanup();
+        setOffline().then(() => app.exit(0));
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip(
+    currentSessionId
+      ? `Respawn Control — ${formatTime(remainingSeconds)} left`
+      : "Respawn Control — Idle"
+  );
+}
 
 // --- Window Management ---
 
@@ -108,6 +170,11 @@ function sendTickToOverlay() {
   const warning =
     remainingSeconds <= 60 ? "critical" : remainingSeconds <= 300 ? "warning" : "normal";
   overlayWindow?.webContents.send("timer:tick", { timeStr, warning, remainingSeconds });
+
+  // Update tray tooltip every 10 seconds (avoid rebuilding menu every second)
+  if (remainingSeconds % 10 === 0) {
+    updateTrayMenu();
+  }
 }
 
 function startTimer(durationSeconds: number) {
@@ -174,6 +241,7 @@ async function endSession() {
   currentSessionId = null;
   overlayWindow?.hide();
   await markSessionEnded();
+  updateTrayMenu();
   showLockScreen();
 }
 
@@ -197,6 +265,7 @@ async function handleStartSession(cmd: SessionCommand) {
   // Update Firestore
   await markSessionStarted(sessionId, cmd.gameId || "", cmd.gameName || "", durationMinutes);
 
+  updateTrayMenu();
   console.log(`[main] Session started: ${sessionId} — ${durationMinutes}min — ${cmd.gameName}`);
 }
 
@@ -252,6 +321,7 @@ app.whenReady().then(async () => {
     args: ["--autostart"],
   });
 
+  createTray();
   createOverlayWindow();
 
   // Show lock screen initially — PC is locked until mobile app starts a session
