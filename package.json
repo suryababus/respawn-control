@@ -43,7 +43,8 @@
     "publish": {
       "provider": "github",
       "owner": "suryababus",
-      "repo": "respawn-control"
+      "repo": "respawn-control",
+      "releaseType": "release"
     }
   },
   "devDependencies": {
