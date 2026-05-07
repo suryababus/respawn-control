@@ -1,12 +1,12 @@
 import { db } from "./firebase";
 import {
+  addDoc,
   doc,
   setDoc,
   onSnapshot,
   updateDoc,
   collection,
   Timestamp,
-  deleteField,
 } from "firebase/firestore";
 import { scanInstalledGames, DetectedGame } from "./game-scanner";
 import os from "os";
@@ -45,6 +45,10 @@ export type SessionCommand = {
 
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let unsubscribeCommand: (() => void) | null = null;
+let currentSessionStartTime: Date | null = null;
+let currentGameName: string | null = null;
+let currentGameId: string | null = null;
+let pcOnlineSince: Date | null = null;
 
 // Callbacks that main.ts will register
 let onStartSession: ((cmd: SessionCommand) => void) | null = null;
@@ -75,6 +79,56 @@ function commandDocRef() {
   return doc(db, "pcs", PC_ID, "control", "command");
 }
 
+// --- History & Uptime Logging ---
+
+function todayDateStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export async function logSessionHistory(
+  sessionId: string,
+  gameId: string,
+  gameName: string,
+  startTime: Date,
+  endTime: Date,
+  durationMinutes: number
+): Promise<void> {
+  try {
+    await addDoc(collection(db, "session_history"), {
+      pcId: PC_ID,
+      pcName: PC_NAME,
+      sessionId,
+      gameId,
+      gameName,
+      startTime: Timestamp.fromDate(startTime),
+      endTime: Timestamp.fromDate(endTime),
+      durationMinutes,
+      date: todayDateStr(),
+    });
+    console.log(`[agent] Logged session history: ${gameName} — ${durationMinutes}min`);
+  } catch (err) {
+    console.error("[agent] Failed to log session history:", err);
+  }
+}
+
+export async function logUptimeEvent(event: "online" | "offline"): Promise<void> {
+  try {
+    await addDoc(collection(db, "uptime_logs"), {
+      pcId: PC_ID,
+      pcName: PC_NAME,
+      event,
+      timestamp: Timestamp.now(),
+      date: todayDateStr(),
+    });
+    console.log(`[agent] Logged uptime event: ${event}`);
+  } catch (err) {
+    console.error("[agent] Failed to log uptime event:", err);
+  }
+}
+
+// --- PC Registration ---
+
 export async function registerPc(): Promise<void> {
   const games = scanInstalledGames();
   console.log(`[agent] Detected ${games.length} installed games`);
@@ -89,6 +143,8 @@ export async function registerPc(): Promise<void> {
   };
 
   await setDoc(pcDocRef(), pcData, { merge: true });
+  pcOnlineSince = new Date();
+  await logUptimeEvent("online");
   console.log(`[agent] Registered PC: ${PC_ID}`);
 }
 
@@ -148,6 +204,23 @@ export async function updateSessionStatus(
 
 export async function markSessionEnded(): Promise<void> {
   try {
+    // Log session history before clearing
+    if (currentSessionStartTime && currentGameName) {
+      const endTime = new Date();
+      const durationMinutes = Math.round((endTime.getTime() - currentSessionStartTime.getTime()) / 60000);
+      await logSessionHistory(
+        "", // sessionId already cleared by caller
+        currentGameId || "",
+        currentGameName,
+        currentSessionStartTime,
+        endTime,
+        durationMinutes
+      );
+    }
+    currentSessionStartTime = null;
+    currentGameName = null;
+    currentGameId = null;
+
     await updateDoc(pcDocRef(), {
       status: "available",
       currentSession: null,
@@ -164,6 +237,11 @@ export async function markSessionStarted(
   durationMinutes: number
 ): Promise<void> {
   try {
+    // Track for history logging
+    currentSessionStartTime = new Date();
+    currentGameName = gameName;
+    currentGameId = gameId;
+
     await updateDoc(pcDocRef(), {
       status: "running",
       currentSession: {
@@ -182,6 +260,7 @@ export async function markSessionStarted(
 
 export async function setOffline(): Promise<void> {
   try {
+    await logUptimeEvent("offline");
     await updateDoc(pcDocRef(), {
       status: "offline",
       currentSession: null,
