@@ -1,16 +1,31 @@
-import { app, BrowserWindow, ipcMain, screen, globalShortcut } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import path from "path";
+import {
+  registerPc,
+  startHeartbeat,
+  listenForCommands,
+  registerCallbacks,
+  updateSessionStatus,
+  markSessionEnded,
+  markSessionStarted,
+  setOffline,
+  launchGame,
+  cleanup,
+  SessionCommand,
+} from "./pc-agent";
 
 // --- Configuration ---
-const ADMIN_PIN = "1234"; // POC: plaintext pin. Production: hashed.
-const DEFAULT_SESSION_SECONDS = 60; // 1 minute for POC demo. Change as needed.
+const ADMIN_PIN = "1234";
 
 let overlayWindow: BrowserWindow | null = null;
 let lockWindow: BrowserWindow | null = null;
 
-let remainingSeconds = DEFAULT_SESSION_SECONDS;
+let remainingSeconds = 0;
 let timerInterval: NodeJS.Timeout | null = null;
 let isPaused = false;
+let currentSessionId: string | null = null;
+
+// --- Window Management ---
 
 function createOverlayWindow() {
   const display = screen.getPrimaryDisplay();
@@ -37,6 +52,7 @@ function createOverlayWindow() {
 
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   overlayWindow.loadFile(path.join(__dirname, "..", "src", "renderer", "overlay.html"));
+  overlayWindow.hide(); // Hidden until a session starts
 }
 
 function createLockWindow() {
@@ -67,57 +83,152 @@ function createLockWindow() {
   lockWindow.setAlwaysOnTop(true, "screen-saver");
 }
 
+function showLockScreen() {
+  overlayWindow?.hide();
+  createLockWindow();
+}
+
+function hideLockScreen() {
+  if (lockWindow) {
+    lockWindow.destroy();
+    lockWindow = null;
+  }
+}
+
+// --- Timer ---
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-function startTimer() {
-  remainingSeconds = DEFAULT_SESSION_SECONDS;
+function sendTickToOverlay() {
+  const timeStr = formatTime(remainingSeconds);
+  const warning =
+    remainingSeconds <= 60 ? "critical" : remainingSeconds <= 300 ? "warning" : "normal";
+  overlayWindow?.webContents.send("timer:tick", { timeStr, warning, remainingSeconds });
+}
+
+function startTimer(durationSeconds: number) {
+  stopTimer();
+  remainingSeconds = durationSeconds;
   isPaused = false;
+
+  overlayWindow?.show();
+  sendTickToOverlay();
 
   timerInterval = setInterval(() => {
     if (isPaused) return;
 
     remainingSeconds--;
+    sendTickToOverlay();
 
-    const timeStr = formatTime(remainingSeconds);
-    const warning =
-      remainingSeconds <= 60 ? "critical" : remainingSeconds <= 300 ? "warning" : "normal";
-
-    overlayWindow?.webContents.send("timer:tick", { timeStr, warning, remainingSeconds });
+    // Sync to Firestore every 10 seconds
+    if (currentSessionId && remainingSeconds % 10 === 0) {
+      updateSessionStatus(currentSessionId, remainingSeconds, "running");
+    }
 
     if (remainingSeconds <= 0) {
-      clearInterval(timerInterval!);
-      timerInterval = null;
+      stopTimer();
       onSessionExpired();
     }
   }, 1000);
 }
 
-function onSessionExpired() {
-  overlayWindow?.webContents.send("timer:expired");
-
-  // Hide overlay and show lock screen
-  overlayWindow?.hide();
-  createLockWindow();
+function stopTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
 }
 
-function unlockAndReset() {
-  if (lockWindow) {
-    lockWindow.destroy();
-    lockWindow = null;
+function addTime(extraSeconds: number) {
+  remainingSeconds += extraSeconds;
+  sendTickToOverlay();
+}
+
+function pauseTimer() {
+  isPaused = true;
+  if (currentSessionId) {
+    updateSessionStatus(currentSessionId, remainingSeconds, "paused");
   }
-  overlayWindow?.show();
-  startTimer();
+}
+
+function resumeTimer() {
+  isPaused = false;
+  if (currentSessionId) {
+    updateSessionStatus(currentSessionId, remainingSeconds, "running");
+  }
+}
+
+async function onSessionExpired() {
+  overlayWindow?.webContents.send("timer:expired");
+  currentSessionId = null;
+  await markSessionEnded();
+  showLockScreen();
+}
+
+async function endSession() {
+  stopTimer();
+  currentSessionId = null;
+  overlayWindow?.hide();
+  await markSessionEnded();
+  showLockScreen();
+}
+
+// --- Firebase Command Handlers ---
+
+async function handleStartSession(cmd: SessionCommand) {
+  const sessionId = cmd.sessionId || `session-${Date.now()}`;
+  const durationMinutes = cmd.durationMinutes || 60;
+
+  currentSessionId = sessionId;
+
+  // Hide lock screen if showing
+  hideLockScreen();
+
+  // Launch the game
+  launchGame(cmd.launchCommand);
+
+  // Start the timer
+  startTimer(durationMinutes * 60);
+
+  // Update Firestore
+  await markSessionStarted(sessionId, cmd.gameId || "", cmd.gameName || "", durationMinutes);
+
+  console.log(`[main] Session started: ${sessionId} — ${durationMinutes}min — ${cmd.gameName}`);
+}
+
+function handleAddTime(cmd: SessionCommand) {
+  const extraMinutes = cmd.addMinutes || 0;
+  if (extraMinutes > 0) {
+    addTime(extraMinutes * 60);
+    console.log(`[main] Added ${extraMinutes} minutes`);
+  }
+}
+
+function handleEndSession() {
+  console.log("[main] Session ended by remote command");
+  endSession();
+}
+
+function handlePause() {
+  console.log("[main] Session paused");
+  pauseTimer();
+}
+
+function handleResume() {
+  console.log("[main] Session resumed");
+  resumeTimer();
 }
 
 // --- IPC Handlers ---
 
 ipcMain.handle("unlock", (_event, pin: string) => {
   if (pin === ADMIN_PIN) {
-    unlockAndReset();
+    hideLockScreen();
+    // Don't auto-start a new session — wait for mobile app command
     return { success: true };
   }
   return { success: false, error: "Wrong PIN" };
@@ -131,17 +242,40 @@ ipcMain.handle("get-initial-time", () => {
   };
 });
 
-// --- App lifecycle ---
+// --- App Lifecycle ---
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createOverlayWindow();
-  startTimer();
 
-  // Prevent Cmd+Q / Alt+F4 from quitting during lock
-  app.on("before-quit", (e) => {
+  // Show lock screen initially — PC is locked until mobile app starts a session
+  showLockScreen();
+
+  // Register command callbacks
+  registerCallbacks({
+    onStartSession: handleStartSession,
+    onAddTime: handleAddTime,
+    onEndSession: handleEndSession,
+    onPause: handlePause,
+    onResume: handleResume,
+  });
+
+  // Connect to Firebase
+  try {
+    await registerPc();
+    startHeartbeat();
+    listenForCommands();
+    console.log("[main] Firebase agent connected");
+  } catch (err) {
+    console.error("[main] Firebase connection failed:", err);
+  }
+
+  app.on("before-quit", async (e) => {
     if (lockWindow) {
       e.preventDefault();
+      return;
     }
+    cleanup();
+    await setOffline();
   });
 });
 
